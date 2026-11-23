@@ -94,6 +94,7 @@ function mainView() {
   const err = h('div', {class: 'err'});
   const detail = h('div');
   const jobsBox = h('div', {class: 'card'});
+  const openLogs = new Map(); //job id -> log text of the jobs whose log is expanded
   const goBtn = h('button', {onclick: analyze}, 'Analyse');
   url.addEventListener('keydown', e => { if (e.key === 'Enter') analyze(); });
 
@@ -129,6 +130,12 @@ function mainView() {
         } catch (e) { derr.textContent = e.message; }
       }}, 'Download'), derr);
   }
+  async function toggleLog(id) {
+    if (openLogs.has(id)) { openLogs.delete(id); return loadJobs(); }
+    try { const r = await fetch(`api/jobs/${id}/log`, {headers: {'X-Requested-With': 'bili-web'}}); openLogs.set(id, await r.text()); }
+    catch (e) { openLogs.set(id, 'failed to load the log: ' + e.message); }
+    loadJobs();
+  }
   async function loadJobs() {
     let jobs;
     try { jobs = await api('GET', 'api/jobs'); } catch (e) { if (e.status === 401) loginView(); return; }
@@ -146,6 +153,9 @@ function mainView() {
       j.state === 'running' ? [h('div', {class: 'bar'}, h('div', {style: `width:${j.percent || 0}%`})),
         h('div', {class: 'muted'}, (STAGE[j.stage] || j.stage), ' ', Math.round(j.percent || 0), '%')] : null,
       j.error ? h('div', {class: 'err'}, j.error) : null,
+      j.state !== 'queued' ? h('div', {}, h('button', {class: 'link', onclick: () => toggleLog(j.id)}, openLogs.has(j.id) ? 'Hide log' : 'View log'),
+        j.state === 'failed' ? h('span', {class: 'muted'}, ' log file on the server: ', j.log_file) : null) : null,
+      openLogs.has(j.id) ? h('pre', {class: 'log'}, openLogs.get(j.id)) : null,
       j.state === 'done' ? h('div', {}, j.files.map(f => h('div', {}, h('a', {href: `api/jobs/${j.id}/files/${encodeURIComponent(f)}`}, f)))) : null);
   }
   show(h('div', {class: 'card'}, h('h2', {}, 'Download a Bilibili video'), h('div', {class: 'row'}, url, goBtn), err), detail, jobsBox);

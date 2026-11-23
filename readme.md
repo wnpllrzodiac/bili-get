@@ -78,6 +78,9 @@ bili-web --host 0.0.0.0 --port 8000   # 局域网访问
   ```
 
   `X-Forwarded-For`/`X-Forwarded-Proto`仅信任来自本机的代理（uvicorn默认`FORWARDED_ALLOW_IPS=127.0.0.1`），代理在其他机器上时请设置该环境变量。Session Cookie的`Path`限定为子路径，HTTPS下自动加`Secure`
+- **日志（下载失败时排查）**：失败的任务会显示原因（如`p1: video download failed`、`downloaded, but ffmpeg merge failed`），点击任务下的“View log”可直接查看该任务的完整日志，包含请求参数、ffmpeg路径、每集的下载/合并状态、ffmpeg的错误输出和异常堆栈（不含Cookie）。日志文件位置：
+  - 单个任务：`<数据目录>/downloads/<任务id>/worker.log`（默认`~/.bili-web/downloads/<id>/worker.log`，失败任务的页面上会显示完整路径；删除任务时一并删除）
+  - 服务端：`<数据目录>/bili-web.log`（任务创建/开始/失败、登录失败，失败时附带任务日志末尾15行；自动轮转）
 - 只接受`https://www.bilibili.com/video/BV...`（或`av...`）形式的链接，暂不支持`b23.tv`短链
 - 测试：`pip install pytest httpx && python -m pytest tests`（使用模拟的下载进程，无需联网）
 

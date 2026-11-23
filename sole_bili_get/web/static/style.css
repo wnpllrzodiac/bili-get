@@ -28,3 +28,4 @@ button.secondary { background:#e9ecef; color:var(--fg); }
 .tag { font-size:12px; padding:1px 8px; border-radius:10px; background:#e9ecef; }
 .tag.done { background:#d5f0e0; color:var(--ok); } .tag.failed { background:#f8d7d3; color:var(--err); }
 a { color:var(--accent); }
+pre.log { background:#1e1e1e; color:#ddd; padding:10px; border-radius:6px; max-height:320px; overflow:auto; font:12px/1.4 ui-monospace, monospace; white-space:pre-wrap; word-break:break-all; }

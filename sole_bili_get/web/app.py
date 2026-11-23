@@ -1,15 +1,15 @@
-import asyncio, json, os, re, tempfile, uuid
+import asyncio, json, logging, logging.handlers, os, re, tempfile, uuid
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .auth import USERNAME, AuthManager, validate_new_password
 from .config import Config, normalize_prefix
 from .db import Database
-from .jobs import JobManager, run_analyze
+from .jobs import JobManager, run_analyze, tail_file
 from .urlcheck import normalize_bilibili_url
 
 __all__ = ['create_app']
@@ -72,8 +72,21 @@ class SettingsReq(BaseModel):
     cookie: Optional[str] = None #None/'' clears it
 
 
+def setup_server_log(cfg):
+    '''<data dir>/bili-web.log: job lifecycle, failures (with the tail of the job log), login failures'''
+    logger = logging.getLogger('bili-web')
+    logger.setLevel(logging.INFO)
+    path = os.path.join(cfg.data_dir, 'bili-web.log')
+    if not any(getattr(h, 'baseFilename', None) == path for h in logger.handlers):
+        h = logging.handlers.RotatingFileHandler(path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding='utf-8')
+        h.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        logger.addHandler(h)
+    logger.info('server log: %s', path)
+
+
 def create_app(config: Optional[Config] = None) -> FastAPI:
     cfg = config or Config()
+    setup_server_log(cfg)
     db = Database(cfg.db_path)
     auth = AuthManager(db, cfg.session_days, cfg.login_max_failures, cfg.login_window_sec)
     jobs = JobManager(db, cfg.jobs_dir, cfg.concurrency)
@@ -129,6 +142,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         user_ok = req.username == USERNAME
         pw_ok = auth.check_password(req.password) #always verified, so timing doesn't reveal the username
         if not (user_ok and pw_ok):
+            logging.getLogger('bili-web').warning('failed login from %s', ip)
             auth.record_failure(ip)
             raise HTTPException(401, 'wrong username or password')
         auth.clear_failures(ip)
@@ -188,6 +202,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     def job_view(j):
         view = {k: j[k] for k in ('id', 'url', 'state', 'stage', 'percent', 'title', 'error', 'files', 'created', 'updated')}
         view['params'] = j['params']
+        view['log_file'] = os.path.join(jobs.job_dir(j['id']), 'worker.log')
         return view
 
     @app.post('/api/jobs')
@@ -242,6 +257,12 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
                 await asyncio.sleep(1)
         return StreamingResponse(gen(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+    @app.get('/api/jobs/{job_id}/log')
+    def job_log(job_id: str, _user=Depends(full_session)):
+        _get_job(job_id)
+        text = tail_file(os.path.join(jobs.job_dir(job_id), 'worker.log'))
+        return PlainTextResponse(text or '(the job log is empty)', headers={'Cache-Control': 'no-store'})
 
     @app.post('/api/jobs/{job_id}/cancel')
     def cancel_job(job_id: str, _user=Depends(full_session)):

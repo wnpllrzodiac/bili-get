@@ -628,6 +628,11 @@ class Bilibili:
                 print('Error: merge failed for unknown reason!')
             sys.stdout.flush()
             return False
+        except subprocess.CalledProcessError as e: #ffmpeg ran but failed: its stderr is the real reason, don't lose it
+            err_tail = (e.stderr or b'').decode('utf-8', errors='replace')[-2000:] if isinstance(e.stderr, (bytes, bytearray)) else ''
+            self.logger.error(f'merge failed, ffmpeg exit code {e.returncode}, cmd: {cmd}, stderr tail:\n{err_tail}')
+            if self.disable_console_log:
+                print(f'Error: merge failed, ffmpeg exit code {e.returncode}!')
         except Exception as e:
             self.logger.error(f'merge failed for {e}!')
             if self.disable_console_log:

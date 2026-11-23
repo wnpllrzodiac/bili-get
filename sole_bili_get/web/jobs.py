@@ -1,10 +1,22 @@
-import json, os, queue, shutil, signal, subprocess, sys, threading, uuid
+import json, logging, os, queue, shutil, signal, subprocess, sys, threading, uuid
 
 from .worker import EVENT_PREFIX
 
 __all__ = ['JobManager', 'run_analyze']
 
 WORKER_CMD = [sys.executable, '-m', 'sole_bili_get.web.worker']
+log = logging.getLogger('bili-web')
+
+
+def tail_file(path, max_bytes=64 * 1024):
+    '''last max_bytes of a text file, '' when it doesn't exist'''
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - max_bytes))
+            return f.read().decode('utf-8', errors='replace')
+    except OSError:
+        return ''
 
 
 def _spawn(mode, req, cookie, log_path=None):
@@ -76,6 +88,7 @@ class JobManager:
 
     def create(self, url, params):
         job_id = uuid.uuid4().hex[:12]
+        log.info('job %s created: %s %s', job_id, url, params)
         self.db.insert_job(job_id, url, params)
         self._queue.put(job_id)
         return job_id
@@ -105,6 +118,7 @@ class JobManager:
             try:
                 self._run(job_id)
             except Exception as e:
+                log.exception('job %s crashed in the job manager', job_id)
                 self.db.update_job(job_id, state='failed', error=f'{type(e).__name__}: {e}')
 
     def _run(self, job_id):
@@ -121,6 +135,7 @@ class JobManager:
             if job_id in self._canceled:
                 _kill(proc)
         self.db.update_job(job_id, state='running', stage='analyzing')
+        log.info('job %s started, worker pid %s, log: %s', job_id, proc.pid, os.path.join(work, 'worker.log'))
         error, files, title = None, None, ''
         for evt in _events(proc):
             t = evt.get('type')
@@ -137,10 +152,13 @@ class JobManager:
             self._canceled.discard(job_id)
         if self.db.get_job(job_id) is None: #deleted meanwhile
             return
+        log.info('job %s worker exited with code %s (canceled=%s, error=%r)', job_id, proc.returncode, canceled, error)
         if canceled:
             self.db.update_job(job_id, state='canceled', stage='')
         elif files is not None and error is None:
             self.db.update_job(job_id, state='done', stage='', percent=100, files=files, title=title)
         else:
+            log.error('job %s failed: %s\n--- last lines of worker.log ---\n%s', job_id, error,
+                      ''.join(tail_file(os.path.join(work, 'worker.log'), 4096).splitlines(True)[-15:]))
             self.db.update_job(job_id, state='failed', stage='',
-                               error=error or f'worker exited with code {proc.returncode}')
+                               error=error or f'worker exited with code {proc.returncode} (see the job log)')

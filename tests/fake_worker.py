@@ -5,6 +5,7 @@ mode = sys.argv[1]
 req = json.loads(sys.stdin.read())
 out = lambda **e: (print('@@EVT@@ ' + json.dumps(e), flush=True))
 print('noise that must be ignored')
+print('hello-from-worker mode=' + mode, file=sys.stderr, flush=True)
 if mode == 'analyze':
     if 'BV1fail' in req['url']:
         out(type='error', message='failed to analyse')

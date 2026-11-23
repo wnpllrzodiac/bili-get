@@ -246,3 +246,106 @@ def test_frontend_uses_relative_urls(client):
     assert "'api/" in js and "'/api/" not in js and '"/api/' not in js
     assert 'innerHTML' not in js #titles come from bilibili, they are only ever inserted as text
     assert client.get('/static/../app.py').status_code == 404
+
+
+# ---------------- logs ----------------
+def test_job_log_endpoint_and_server_log(authed):
+    job_id = authed.post('api/jobs', json={'url': 'https://www.bilibili.com/video/BV1bad000000'}, headers=H).json()['id']
+    j = wait_state(authed, job_id, ('failed',))
+    assert j['log_file'].endswith(os.path.join(job_id, 'worker.log'))
+    r = authed.get(f'api/jobs/{job_id}/log')
+    assert r.status_code == 200 and 'hello-from-worker mode=download' in r.text
+    assert authed.get('api/jobs/nope/log').status_code == 404
+    srv = open(os.path.join(authed.app.state.cfg.data_dir, 'bili-web.log'), encoding='utf-8').read()
+    assert f'job {job_id} created' in srv and f'job {job_id} failed: download failed' in srv
+    assert 'hello-from-worker' in srv #the tail of the job log is copied into the server log on failure
+
+
+def test_job_log_requires_login(client):
+    assert client.get('api/jobs/abc/log').status_code == 401
+
+
+def test_failed_login_is_logged(client):
+    login(client, 'wrong')
+    srv = open(os.path.join(client.app.state.cfg.data_dir, 'bili-web.log'), encoding='utf-8').read()
+    assert 'failed login from' in srv
+
+
+# ---------------- worker diagnosis (the real worker with a stubbed downloader, no network) ----------------
+class FakeBili:
+    result = {}
+
+    def __init__(self, url, **kw):
+        import logging
+        self.logger = logging.getLogger('FakeBili')
+        self.playlists_info = {}
+
+    def start(self):
+        self.playlists_info = dict(FakeBili.result)
+
+
+def run_worker(monkeypatch, tmp_path, playlists, mode='merged'):
+    import io, json
+    from sole_bili_get import bili_get
+    from sole_bili_get.web import worker
+    FakeBili.result = playlists
+    monkeypatch.setattr(bili_get, 'Bilibili', FakeBili)
+    events = io.StringIO()
+    monkeypatch.setattr(worker, '_events', events)
+    monkeypatch.setattr('shutil.which', lambda n: '/usr/bin/ffmpeg')
+    rc = worker.do_download({'url': GOOD, 'work_dir': str(tmp_path / 'w'), 'mode': mode, 'quality': 'MAX'})
+    evts = [json.loads(l[len(worker.EVENT_PREFIX):]) for l in events.getvalue().splitlines() if l.startswith(worker.EVENT_PREFIX)]
+    return rc, [e for e in evts if e['type'] in ('error', 'result')][-1]
+
+
+def test_worker_reports_why_it_failed(monkeypatch, tmp_path, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 0, 'merge_flag': False, 'title': 't'}})
+    assert rc == 1 and 'p1: video download failed' in e['message'] and 'job log' in e['message']
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 1, 'merge_flag': False, 'title': 't'}})
+    assert 'p1: audio download failed' in e['message']
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 3, 'merge_flag': False, 'title': 't'}})
+    assert 'p1: downloaded, but ffmpeg merge failed' in e['message']
+    rc, e = run_worker(monkeypatch, tmp_path, {})
+    assert 'no episode information' in e['message']
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 3, 'merge_flag': True, 'title': 't'}, 2: {'download_flag': 0, 'title': 't2'}})
+    assert 'p2: video download failed' in e['message'] and 'p1' not in e['message']
+    assert 'episode p1: download_flag=3' in caplog.text and 'job failed:' in caplog.text
+
+
+def test_worker_success(monkeypatch, tmp_path):
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 3, 'merge_flag': True, 'title': 'My title'}})
+    assert rc == 0 and e['type'] == 'result' and e['title'] == 'My title'
+
+
+def test_worker_unhandled_exception_is_reported(monkeypatch, tmp_path):
+    import io, json
+    from sole_bili_get.web import worker
+    events = io.StringIO()
+    monkeypatch.setattr('sys.stdin', io.StringIO(json.dumps({'url': GOOD, 'work_dir': str(tmp_path)})))
+    monkeypatch.setattr('sys.stdout', events)
+    assert worker.main(['bogus-mode']) == 1
+    assert 'see the job log for the traceback' in events.getvalue()
+
+
+def test_merge_failure_keeps_ffmpeg_stderr(tmp_path):
+    """the downloader used to log only 'returned non-zero exit status', the real ffmpeg error was lost"""
+    import logging, shutil
+    if shutil.which('ffmpeg') is None:
+        pytest.skip('ffmpeg not installed')
+    from sole_bili_get.bili_get import Bilibili
+    b = Bilibili(GOOD, base_dir=str(tmp_path), auto_merge=True, disable_console_log=True)
+    b._Bilibili__ffmpeg_exist = True
+    v, a = tmp_path / 'v.mp4', tmp_path / 'a.mp3'
+    v.write_bytes(b'not a video')
+    a.write_bytes(b'not audio')
+    records = []
+
+    class H(logging.Handler):
+        def emit(self, rec):
+            records.append(rec.getMessage())
+    b.logger.addHandler(H())
+    assert b.merge_video_and_audio(str(v), str(a)) is False
+    msg = '\n'.join(records)
+    assert 'merge failed, ffmpeg exit code' in msg and 'Invalid data found' in msg
