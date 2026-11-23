@@ -21,6 +21,24 @@ pip install dist\sole_bili_get-0.0.13-py3-none-any.whl //demo
 bili-get --help
 ```
 
+### 方式三：Linux下直接使用源码（开发/调试）
+
+使用虚拟环境并以可编辑模式（editable）安装，修改源码后无需重新安装即可生效：
+
+```console
+git clone https://github.com/muggledy/bili-get.git
+cd bili-get
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .                  # 会自动安装 requests、colorama、psutil
+sudo apt install ffmpeg           # 用于合并音视频，未安装则音视频会分开保存
+bili-get --help
+bili-get https://www.bilibili.com/video/BV19xs36HEDR -o /tmp/out
+```
+
+- 不要使用`python -m sole_bili_get ...`，包内没有`__main__.py`，入口是`sole_bili_get:main`。如果不想安装，也可以在源码目录（已安装依赖`pip install requests colorama psutil`）下直接运行：`python -c "from sole_bili_get import main; main()" <url> -o /tmp/out`
+- 添加`--debug`可输出详细日志；下载1080P需要`-c "your cookie"`（`-c chrome`仅支持Windows）
+- 没有root权限时，可以`pip install imageio-ffmpeg`，再把其自带的ffmpeg链接到虚拟环境：`ln -s "$(python -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())')" .venv/bin/ffmpeg`
+
 ## 使用
 
 ```console
