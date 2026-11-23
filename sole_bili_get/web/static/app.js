@@ -132,7 +132,9 @@ function mainView() {
   async function loadJobs() {
     let jobs;
     try { jobs = await api('GET', 'api/jobs'); } catch (e) { if (e.status === 401) loginView(); return; }
-    jobsBox.replaceChildren(h('h2', {}, 'Downloads'), jobs.length ? null : h('div', {class: 'muted'}, 'No downloads yet.'), jobs.map(jobRow));
+    //replaceChildren() would turn null and arrays into text, so go through h() which skips null and flattens arrays
+    jobsBox.replaceChildren(...h('div', {}, h('h2', {}, 'Downloads'),
+      jobs.length ? null : h('div', {class: 'muted'}, 'No downloads yet.'), jobs.map(jobRow)).childNodes);
   }
   function jobRow(j) {
     const active = j.state === 'queued' || j.state === 'running';
