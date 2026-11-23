@@ -16,7 +16,9 @@ from .av2bv import av2bv
 if platform.system() == 'Windows':
     from .chrome_cookie import get_bilibili_cookie
 
-__all__ = ['Bilibili', 'main', 'get_bilibili_cookie']
+__all__ = ['Bilibili', 'main']
+if platform.system() == 'Windows':
+    __all__.append('get_bilibili_cookie')
 
 colorama.init(autoreset=True)
 
@@ -560,8 +562,8 @@ class Bilibili:
         merge_file = '_merge'.join(os.path.splitext(video_file))
         if os.path.exists(merge_file):
             os.remove(merge_file)
-        cmd = f"ffmpeg -i \"{video_file}\" -i \"{audio_file}\" -c:v copy -c:a aac -strict experimental \"{merge_file}\""
-        self.logger.info(f'start merging audio and video files by exec "{cmd}"')
+        cmd = ['ffmpeg', '-i', video_file, '-i', audio_file, '-c:v', 'copy', '-c:a', 'aac', '-strict', 'experimental', merge_file] #list form works on both Windows and Linux
+        self.logger.info(f'start merging audio and video files by exec {cmd}')
         if self.disable_console_log:
             print(f'start ffmpeg merging...')
         try:
@@ -799,7 +801,7 @@ class Bilibili:
             judge, reason = True, 'null'
             if process.create_time() > timestamp:
                 judge, reason = False, 'pid create time is latter than playlist record process time'
-            elif 'python' not in process.name().lower():
+            elif not any(k in process.name().lower() for k in ('python', 'bili-get', 'bili_get')): #Linux下console script的进程名是bili-get
                 judge, reason = False, 'this is not a python process'
             elif passed_time_exceeds_specified_hours(timestamp, 1): #如果某个进程下载一个视频一个小时还未完成，说明该进程存在错误卡住或
                             #根本不是bili_get下载进程（只是碰巧该进程号存在且过了前面两个if判断而已），则当前bili_get进程也会尝试下载它

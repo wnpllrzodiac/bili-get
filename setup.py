@@ -1,5 +1,11 @@
 import setuptools
-from sole_bili_get import __version__, __name__
+import re
+
+# read metadata without importing the package (its dependencies aren't installed yet)
+with open("sole_bili_get/__init__.py", "r", encoding="utf-8") as f:
+    _init = f.read()
+__version__ = re.search(r"__version__\s*=\s*'([^']+)'", _init).group(1)
+__name__ = re.search(r"__name__\s*=\s*'([^']+)'", _init).group(1)
 
 '''
 python setup.py develop
