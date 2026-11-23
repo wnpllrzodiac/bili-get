@@ -66,6 +66,7 @@ class JobReq(BaseModel):
     playlist: bool = False
     danmu: bool = False
     cover: bool = False
+    title: str = '' #shown in the job list, taken from /api/analyze (display only, it is never used for file names)
 
 
 class SettingsReq(BaseModel):
@@ -219,7 +220,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
             raise HTTPException(400, 'invalid mode')
         params = {'quality': q, 'codec': req.codec or '', 'mode': req.mode, 'playlist': req.playlist,
                   'danmu': req.danmu, 'cover': req.cover}
-        return {'id': jobs.create(url, params)}
+        return {'id': jobs.create(url, params, ' '.join(req.title.split())[:200])}
 
     @app.get('/api/jobs')
     def list_jobs(_user=Depends(full_session)):

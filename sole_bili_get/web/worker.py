@@ -138,7 +138,8 @@ def do_download(req):
     shutil.rmtree(tmp_root, ignore_errors=True)
     if not ok:
         log.error('job failed: %s', '; '.join(problems))
-        emit(type='error', message='; '.join(problems) + ' (see the job log for details)')
+        emit(type='error', message='; '.join(problems) + ' (see the job log for details)',
+             title=(next(iter(eps.values())).get('title') or '') if eps else '')
         return 1
     log.info('job ok: %s', names)
     emit(type='result', files=names, title=(next(iter(eps.values())).get('title') or ''))

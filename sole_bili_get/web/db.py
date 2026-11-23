@@ -43,11 +43,11 @@ class Database:
                                    'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, str(value)))
             self._conn.commit()
 
-    def insert_job(self, job_id, url, params):
+    def insert_job(self, job_id, url, params, title=''):
         now = time.time()
         with self._lock:
-            self._conn.execute('INSERT INTO jobs(id,url,params,state,created,updated) VALUES(?,?,?,?,?,?)',
-                               (job_id, url, json.dumps(params), 'queued', now, now))
+            self._conn.execute('INSERT INTO jobs(id,url,params,state,title,created,updated) VALUES(?,?,?,?,?,?,?)',
+                               (job_id, url, json.dumps(params), 'queued', title, now, now))
             self._conn.commit()
 
     def update_job(self, job_id, **fields):

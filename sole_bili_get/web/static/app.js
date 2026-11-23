@@ -125,7 +125,7 @@ function mainView() {
         derr.textContent = '';
         try {
           await api('POST', 'api/jobs', {url: info.url, quality: q.value, codec: codec.value || null, mode: mode.value,
-                                         playlist: playlist.checked, danmu: danmu.checked, cover: cover.checked});
+                                         playlist: playlist.checked, danmu: danmu.checked, cover: cover.checked, title: info.title});
           detail.replaceChildren(); loadJobs();
         } catch (e) { derr.textContent = e.message; }
       }}, 'Download'), derr);
@@ -150,6 +150,7 @@ function mainView() {
         h('span', {class: 'spacer'}),
         active ? h('button', {class: 'secondary', onclick: async () => { await api('POST', `api/jobs/${j.id}/cancel`); loadJobs(); }}, 'Cancel')
                : h('button', {class: 'secondary', onclick: async () => { await api('DELETE', `api/jobs/${j.id}`); loadJobs(); }}, 'Delete')),
+      j.title ? h('div', {class: 'muted'}, j.url) : null,
       j.state === 'running' ? [h('div', {class: 'bar'}, h('div', {style: `width:${j.percent || 0}%`})),
         h('div', {class: 'muted'}, (STAGE[j.stage] || j.stage), ' ', Math.round(j.percent || 0), '%')] : null,
       j.error ? h('div', {class: 'err'}, j.error) : null,

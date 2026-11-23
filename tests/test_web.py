@@ -349,3 +349,22 @@ def test_merge_failure_keeps_ffmpeg_stderr(tmp_path):
     assert b.merge_video_and_audio(str(v), str(a)) is False
     msg = '\n'.join(records)
     assert 'merge failed, ffmpeg exit code' in msg and 'Invalid data found' in msg
+
+
+# ---------------- job titles ----------------
+def test_job_title_is_kept_when_the_job_fails(authed):
+    r = authed.post('api/jobs', json={'url': 'https://www.bilibili.com/video/BV1bad000000', 'title': '  My   video\n title '}, headers=H)
+    j = wait_state(authed, r.json()['id'], ('failed',))
+    assert j['title'] == 'My video title' #normalised whitespace, known before the download started
+
+
+def test_job_title_is_limited_and_optional(authed):
+    j = authed.post('api/jobs', json={'url': GOOD, 'title': 'x' * 1000}, headers=H).json()
+    assert len(authed.get(f"api/jobs/{j['id']}").json()['title']) == 200
+    j2 = wait_state(authed, authed.post('api/jobs', json={'url': GOOD}, headers=H).json()['id'], ('done',))
+    assert j2['title'] == 'demo' #without a title from the page, the worker's result fills it in
+
+
+def test_worker_error_carries_the_title(monkeypatch, tmp_path):
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 0, 'merge_flag': False, 'title': 'Some title'}})
+    assert e['type'] == 'error' and e['title'] == 'Some title'

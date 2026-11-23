@@ -86,10 +86,10 @@ class JobManager:
     def job_dir(self, job_id):
         return os.path.join(self.jobs_dir, job_id)
 
-    def create(self, url, params):
+    def create(self, url, params, title=''):
         job_id = uuid.uuid4().hex[:12]
         log.info('job %s created: %s %s', job_id, url, params)
-        self.db.insert_job(job_id, url, params)
+        self.db.insert_job(job_id, url, params, title)
         self._queue.put(job_id)
         return job_id
 
@@ -136,15 +136,16 @@ class JobManager:
                 _kill(proc)
         self.db.update_job(job_id, state='running', stage='analyzing')
         log.info('job %s started, worker pid %s, log: %s', job_id, proc.pid, os.path.join(work, 'worker.log'))
-        error, files, title = None, None, ''
+        error, files, title = None, None, job['title'] or '' #known from the analyse step, a failed job keeps it
         for evt in _events(proc):
             t = evt.get('type')
             if t == 'progress':
                 self.db.update_job(job_id, stage=evt.get('stage', ''), percent=evt.get('percent', 0))
             elif t == 'result':
-                files, title = evt.get('files', []), evt.get('title', '')
+                files, title = evt.get('files', []), evt.get('title') or title
             elif t == 'error':
                 error = evt.get('message')
+                title = evt.get('title') or title
         proc.wait()
         with self._lock:
             self._procs.pop(job_id, None)
@@ -160,5 +161,5 @@ class JobManager:
         else:
             log.error('job %s failed: %s\n--- last lines of worker.log ---\n%s', job_id, error,
                       ''.join(tail_file(os.path.join(work, 'worker.log'), 4096).splitlines(True)[-15:]))
-            self.db.update_job(job_id, state='failed', stage='',
+            self.db.update_job(job_id, state='failed', stage='', title=title,
                                error=error or f'worker exited with code {proc.returncode} (see the job log)')
