@@ -40,6 +40,11 @@ class Bilibili:
         self.debug_all = kwargs.get('debug_all', False)
         utils._utils_debug = self.debug_all
         self.auto_merge = kwargs.get('auto_merge', True)
+        self.codec = kwargs.get('codec') #preferred video codec prefix: avc1/hev1/av01, None means default priority
+        self.download_video = kwargs.get('download_video', True)
+        self.download_audio = kwargs.get('download_audio', True)
+        self.download_danmu = kwargs.get('download_danmu', True)
+        self.download_cover = kwargs.get('download_cover', True)
         self.__crawler = Crawler(None, headers=self.headers, multi_thread_num=kwargs.get('multi_thread_num', 0),
                                  #proxies={'http':'socks5://127.0.0.1:10808','https':'socks5://127.0.0.1:10808'})
         )
@@ -247,6 +252,8 @@ class Bilibili:
                             if manual_quality_id in quality_dict.keys():
                                 break
                         self.__quality_id = manual_quality_id
+                    elif self.quality.isdigit(): #specific quality id, the nearest available one is used when it doesn't exist
+                        self.__quality_id = int(self.quality)
                     elif self.quality == 'MIN':
                         self.__quality_id = min(quality_dict.keys())
                     else: #default is MAX quality
@@ -351,6 +358,29 @@ class Bilibili:
                               f'{e.__traceback__.tb_lineno}] {e}) occurs when getting from origin {self.origin_url}')
             return None
 
+    def analyze(self):
+        '''仅获取并解析视频页面（不下载任何内容），返回可JSON序列化的信息字典（供web服务使用），失败返回None'''
+        if self.__bvid is None:
+            return None
+        req = requests.get(self.origin_url, headers=self.headers, cookies=self.cookies, timeout=(10, 30))
+        if not req.ok:
+            self.logger.error(f'get {self.origin_url} failed: {req.status_code}')
+            return None
+        info = self.analyse_playinfo(req.text)
+        if info is None:
+            return None
+        qualities = []
+        for qid, q in sorted(info['video_info'].items(), reverse=True):
+            codecs = []
+            for _url, codec_info in q['urls']:
+                c = codec_info.split('_')[0].split('.')[0]
+                if c not in codecs:
+                    codecs.append(c)
+            qualities.append({'id': qid, 'name': q['quality'], 'width': q['size'][0], 'height': q['size'][1], 'codecs': codecs})
+        return {'bvid': info['bvid'], 'title': info['title'], 'desc': info['desc'], 'author': info['author']['name'],
+                'cover': info['cover'], 'episodes': info['videos'], 'current_episode': info['p_num'],
+                'pages': info['pages'], 'qualities': qualities, 'has_audio': bool(info['audio_url'])}
+
     def analyse_playinfo(self, html_text):
         try:
             ret_info = {}
@@ -418,6 +448,7 @@ class Bilibili:
             else:
                 ret_info['title'] = window_initial_state['videoData']['title']
             ret_info['title'] = self.normalize_filename(ret_info['title'])
+            ret_info['pages'] = [{'page': _['page'], 'part': _.get('part', '')} for _ in window_initial_state['videoData'].get('pages', [])]
             ret_info['desc'] = window_initial_state['videoData']['desc']
             ret_info['desc'] = '无' if not ret_info['desc'] else ret_info['desc']
             ret_info['url'] = self.generate_bilibili_video_url(ret_info['bvid'], 
@@ -437,6 +468,8 @@ class Bilibili:
         #使用的codec编解码器不同，譬如avc1.640033，hev1.1.6.L120.90，av01.0.00M.10.0.110.01.01.01.0，这个列表其实是一个优
         #先级列表，未在列表中出现的解码器优先级都极低，按照优先级下载一个成功即结束（download_only_one==True，为False会下载
         #所有解码器类型的视频，默认音视频合成的话，只会将优先级最高的那个视频和音频文件进行合成）
+        if self.codec:
+            download_specific_codec_video = [self.codec] + [_ for _ in download_specific_codec_video if _ != self.codec]
         def get_idx_of_specific_codedc(codec_info):
             _ = [_1 for _1,_2 in enumerate(download_specific_codec_video) if codec_info.lower().startswith(_2.lower())]
             if _ == []: return float('inf')
@@ -457,7 +490,7 @@ class Bilibili:
                                        for i,q in enumerate(available_qualities)], key=lambda x:x[1])[0][0]
             best_quality = available_qualities[best_quality_idx]
             get_video_url_already_succeed = 0
-            if self.danmu_urls.get(p): #弹幕文件只是附带下载，不保证下载成功
+            if self.download_danmu and self.danmu_urls.get(p): #弹幕文件只是附带下载，不保证下载成功
                 if self.download_danmu_xml(self.danmu_urls[p], save_path=os.path.normpath(os.path.join(self.__output_dir, f"{info['title']}.xml"))):
                     danmu_ok_prompt = f"p{p} danmu xml"\
                         f" is downloaded into "+os.path.normpath(os.path.join(os.path.join(self.__output_dir, f"{info['title']}.xml")))
@@ -466,11 +499,11 @@ class Bilibili:
                     self.playlists_info[p]['danmu_url'] = self.danmu_urls[p]
             self.__crawler.url = self.playlists_info[p]['cover']
             self.__crawler.save_path = os.path.normpath(os.path.join(self.__output_dir, f"{info['title']}"))
-            if self.__crawler.get(): #视频封面只是附带下载，不保证下载成功
+            if self.download_cover and self.__crawler.get(): #视频封面只是附带下载，不保证下载成功
                 self.logger.info(f'p{p} cover is downloaded into {self.__crawler.save_path}')
                 if self.disable_console_log:
                     print(colored_text(f'p{p} cover is downloaded into {self.__crawler.save_path}', 'white'))
-            if self.playlists_info[p]['download_flag'] != 1:
+            if self.download_video and self.playlists_info[p]['download_flag'] != 1:
                 for url,codec_info in sorted(info['video_info'][best_quality]['urls'], 
                                              key=lambda x:get_idx_of_specific_codedc(x[1])):
                     #if not [_c for _c in download_specific_codec_video if codec_info.lower().startswith(_c.lower())]:
@@ -503,10 +536,14 @@ class Bilibili:
                         time.sleep(random.choice([sleep_sec * 0.1 for sleep_sec in range(10, 20)])) #惩罚
             else:
                 self.logger.info(f"p{p} video has been downloaded in {self.__output_dir}")
-            if self.playlists_info[p]['download_flag'] == 0:
+            if self.download_video and self.playlists_info[p]['download_flag'] == 0:
                 self.__all_downloed_flag = False
                 if self.disable_console_log:
                     print(f"Error: download p{p} video failed, you can re-exec this command later")
+                continue
+            if not self.download_audio: #video only
+                self.playlists_info[p]['download_flag'] = 3
+                self.save_playlists_info_into_local()
                 continue
             downloading_audio_info = "start to download " + colored_text(f"p{p}(audio)", 'blue') + "..."
             if self.disable_console_log:
@@ -535,7 +572,7 @@ class Bilibili:
                         if os.path.exists(self.playlists_info[p]['audio_save_path']):
                             os.remove(self.playlists_info[p]['audio_save_path'])
                         os.rename(self.__crawler.save_path, self.playlists_info[p]['audio_save_path'])
-                    self.playlists_info[p]['download_flag'] += 2
+                    self.playlists_info[p]['download_flag'] = 3 if not self.download_video else self.playlists_info[p]['download_flag'] + 2
                     self.save_playlists_info_into_local() #立即保存下载进度，避免因合成失败导致下次还要重复下载音频文件
                     if self.auto_merge and (not self.playlists_info[p]['merge_flag']) \
                             and self.merge_video_and_audio(self.playlists_info[p]['video_save_path'], self.playlists_info[p]['audio_save_path']):

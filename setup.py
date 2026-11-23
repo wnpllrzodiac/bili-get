@@ -34,12 +34,17 @@ setuptools.setup(
     url="https://github.com/muggledy/bili-get",
     license="MIT",
     packages=setuptools.find_packages(),
+    include_package_data=True,
+    package_data={'sole_bili_get.web': ['static/*']},
     python_requires=">=3.6",
     install_requires=[
         'requests', 'colorama', 'psutil',
         'pycryptodome; platform_system == "Windows"',
         'pypiwin32; platform_system == "Windows"',
     ],
+    extras_require={
+        'web': ['fastapi', 'uvicorn'],
+    },
     classifiers=[
         "License :: OSI Approved :: MIT License",
         'Operating System :: Microsoft :: Windows',
@@ -51,6 +56,7 @@ setuptools.setup(
     entry_points={
         'console_scripts': [
             'bili-get = sole_bili_get:main',
+            'bili-web = sole_bili_get.web.__main__:main',
         ],
     }
 )

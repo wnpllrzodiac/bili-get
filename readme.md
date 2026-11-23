@@ -39,6 +39,48 @@ bili-get https://www.bilibili.com/video/BV19xs36HEDR -o /tmp/out
 - 添加`--debug`可输出详细日志；下载1080P需要`-c "your cookie"`（`-c chrome`仅支持Windows）
 - 没有root权限时，可以`pip install imageio-ffmpeg`，再把其自带的ffmpeg链接到虚拟环境：`ln -s "$(python -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())')" .venv/bin/ffmpeg`
 
+## Web服务（bili-web）
+
+在浏览器中粘贴视频链接，选择画质、编码、下载内容（音视频合并/仅视频/仅音频，可选弹幕、封面）即可下载；支持局域网访问和Nginx反向代理（含子路径）。
+
+```console
+pip install -e ".[web]"          # 或 pip install "sole-bili-get[web]"
+sudo apt install ffmpeg          # 合并音视频需要
+bili-web                         # 默认监听 127.0.0.1:8000
+bili-web --host 0.0.0.0 --port 8000   # 局域网访问
+```
+
+- **登录**：用户名固定为`admin`，初始密码`admin`，**首次登录必须修改密码**（至少8位且不能为`admin`），之后可在“Settings”中再次修改。忘记密码：`bili-web --reset-password`（恢复为`admin`，下次登录需重新修改）。连续输错密码会被临时锁定（默认5次/5分钟/每IP）
+- **全局设置**：B站Cookie（可选，下载1080P及以上需要）。Cookie只保存在服务器上，不会返回给浏览器
+- **配置**（环境变量或命令行参数）：
+
+  | 环境变量 | 参数 | 默认值 | 说明 |
+  |---|---|---|---|
+  | `BILI_WEB_HOST` | `--host` | `127.0.0.1` | 监听地址，局域网用`0.0.0.0` |
+  | `BILI_WEB_PORT` | `--port` | `8000` | 监听端口 |
+  | `BILI_WEB_ROOT_PATH` | `--root-path` | 空 | 子路径前缀，如`/hp/bilidown` |
+  | `BILI_WEB_DATA_DIR` | `--data-dir` | `~/.bili-web` | 数据库和下载文件目录 |
+  | `BILI_WEB_CONCURRENCY` | | `2` | 同时下载的任务数 |
+
+- **Nginx反向代理（WAN）**：TLS在Nginx终止，bili-web自身只提供HTTP，不要把它的端口直接暴露到公网。`proxy_pass`末尾带`/`（去掉前缀）或不带（保留前缀）都支持；前缀来自`BILI_WEB_ROOT_PATH`，或Nginx传入的`X-Forwarded-Prefix`头（环境变量优先）。以`/hp/bilidown/`为例：
+
+  ```nginx
+  location /hp/bilidown/ {
+      proxy_pass http://127.0.0.1:8000/;       # 末尾的/表示去掉前缀
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Prefix /hp/bilidown;
+      proxy_buffering off;                     # 进度推送
+      proxy_read_timeout 3600s;                # 大文件下载
+  }
+  ```
+
+  `X-Forwarded-For`/`X-Forwarded-Proto`仅信任来自本机的代理（uvicorn默认`FORWARDED_ALLOW_IPS=127.0.0.1`），代理在其他机器上时请设置该环境变量。Session Cookie的`Path`限定为子路径，HTTPS下自动加`Secure`
+- 只接受`https://www.bilibili.com/video/BV...`（或`av...`）形式的链接，暂不支持`b23.tv`短链
+- 测试：`pip install pytest httpx && python -m pytest tests`（使用模拟的下载进程，无需联网）
+
 ## 使用
 
 ```console

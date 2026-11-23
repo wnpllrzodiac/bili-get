@@ -1,0 +1,30 @@
+:root { --fg:#222; --muted:#777; --bg:#f6f7f9; --card:#fff; --accent:#fb7299; --line:#e3e5e8; --err:#c0392b; --ok:#2e8b57; }
+* { box-sizing: border-box; }
+body { margin:0; font:15px/1.5 system-ui, sans-serif; color:var(--fg); background:var(--bg); }
+header { display:flex; align-items:center; gap:12px; padding:10px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+header[hidden] { display:none; }
+.spacer { flex:1; }
+main { max-width:860px; margin:20px auto; padding:0 16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; }
+h2 { margin:0 0 12px; font-size:17px; }
+label { display:block; margin:10px 0 4px; color:var(--muted); font-size:13px; }
+input[type=text], input[type=password], select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.row > input[type=text] { flex:1; min-width:200px; }
+button { padding:8px 14px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+button:disabled { opacity:.5; cursor:default; }
+button.link { background:none; color:var(--accent); padding:4px 6px; }
+button.secondary { background:#e9ecef; color:var(--fg); }
+.err { color:var(--err); margin-top:8px; }
+.muted { color:var(--muted); font-size:13px; }
+.video { display:flex; gap:12px; }
+.video img { width:160px; height:100px; object-fit:cover; border-radius:6px; background:#ddd; }
+.opts { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:4px 16px; }
+.check { display:flex; gap:6px; align-items:center; margin:6px 0; color:var(--fg); font-size:15px; }
+.job { border-top:1px solid var(--line); padding:10px 0; }
+.job:first-child { border-top:0; }
+.bar { height:8px; background:#e9ecef; border-radius:4px; overflow:hidden; margin:6px 0; }
+.bar > div { height:100%; background:var(--accent); transition:width .3s; }
+.tag { font-size:12px; padding:1px 8px; border-radius:10px; background:#e9ecef; }
+.tag.done { background:#d5f0e0; color:var(--ok); } .tag.failed { background:#f8d7d3; color:var(--err); }
+a { color:var(--accent); }

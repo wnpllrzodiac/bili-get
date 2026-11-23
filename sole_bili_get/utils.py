@@ -72,6 +72,8 @@ minetype2suffix = {'video/mp4':'mp4','video/x-flv':'flv','audio/mpeg':'mp3',
                    'audio/x-mpegurl':'m3u','audio/mp4a-latm':'m4a','image/jpeg':'jpeg',
                    'application/x-gzip':'gz'}
 
+progress_callback = None #optional hook: callback(title, count, total), used by the web service
+
 class ProgressBar:
     def __init__(self, title, count, total):
         self.info = "%.2f%%|%s| %s【%s】 %.2fMB/%.2fMB"
@@ -89,6 +91,11 @@ class ProgressBar:
     
     def refresh(self, count):
         self.count += count
+        if progress_callback is not None:
+            try:
+                progress_callback(self.title, self.count, self.total)
+            except Exception:
+                pass
         end_str = "\r"
         if self.count >= self.total:
             end_str = '\n'

@@ -14,3 +14,7 @@
 !/sole_bili_get/av2bv.py
 !/scripts/
 !/scripts/download_collection.py
+!/sole_bili_get/web/
+/sole_bili_get/web/__pycache__/
+!/tests/
+/tests/__pycache__/
