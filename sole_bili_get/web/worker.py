@@ -4,7 +4,7 @@ One subprocess per task because the downloader keeps process-wide state (sole_bi
 pid based locks). Request json comes from stdin, the bilibili cookie from env BILI_COOKIE, events go to
 stdout as lines prefixed by EVENT_PREFIX (everything else printed by the downloader is discarded).
 '''
-import json, logging, os, shutil, sys, time, traceback
+import json, logging, os, re, shutil, sys, time, traceback
 
 EVENT_PREFIX = '@@EVT@@ '
 _events = None
@@ -103,13 +103,18 @@ def do_download(req):
     b.start()
     # why did (not) it work: one line per episode with the internal state
     problems = []
-    eps = {p: v for p, v in b.playlists_info.items() if isinstance(v, dict) and 'download_flag' in v}
+    known = {p: v for p, v in b.playlists_info.items() if isinstance(v, dict) and 'download_flag' in v}
+    for p, v in sorted(known.items()):
+        log.info('episode p%s: download_flag=%s (3=video+audio ok) merge_flag=%s video=%s audio=%s', p, v.get('download_flag'),
+                 v.get('merge_flag'), v.get('video_save_path'), v.get('audio_save_path'))
+    # The downloader keeps a placeholder for every episode of a multi-episode video. Without "download all" only
+    # the requested one (?p=N in the url, default p1) is downloaded, the placeholders of the others are not failures.
+    requested = int((re.search(r'[?&]p=(\d+)', req['url']) or [0, 1])[1])
+    eps = known if req.get('playlist') else {p: v for p, v in known.items() if p == requested}
     if not eps:
         problems.append('no episode information was obtained (page could not be analysed, or blocked by bilibili)')
     for p, v in sorted(eps.items()):
         flag, merged = v.get('download_flag'), v.get('merge_flag')
-        log.info('episode p%s: download_flag=%s (3=video+audio ok) merge_flag=%s video=%s audio=%s', p, flag, merged,
-                 v.get('video_save_path'), v.get('audio_save_path'))
         if flag != 3:
             what = {0: 'video download failed', 1: 'audio download failed'}.get(flag, f'incomplete download (flag {flag})')
             if mode == 'audio':

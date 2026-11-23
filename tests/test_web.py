@@ -284,7 +284,7 @@ class FakeBili:
         self.playlists_info = dict(FakeBili.result)
 
 
-def run_worker(monkeypatch, tmp_path, playlists, mode='merged'):
+def run_worker(monkeypatch, tmp_path, playlists, mode='merged', playlist=False):
     import io, json
     from sole_bili_get import bili_get
     from sole_bili_get.web import worker
@@ -293,7 +293,8 @@ def run_worker(monkeypatch, tmp_path, playlists, mode='merged'):
     events = io.StringIO()
     monkeypatch.setattr(worker, '_events', events)
     monkeypatch.setattr('shutil.which', lambda n: '/usr/bin/ffmpeg')
-    rc = worker.do_download({'url': GOOD, 'work_dir': str(tmp_path / 'w'), 'mode': mode, 'quality': 'MAX'})
+    rc = worker.do_download({'url': GOOD, 'work_dir': str(tmp_path / 'w'), 'mode': mode, 'quality': 'MAX',
+                            'playlist': playlist})
     evts = [json.loads(l[len(worker.EVENT_PREFIX):]) for l in events.getvalue().splitlines() if l.startswith(worker.EVENT_PREFIX)]
     return rc, [e for e in evts if e['type'] in ('error', 'result')][-1]
 
@@ -309,7 +310,7 @@ def test_worker_reports_why_it_failed(monkeypatch, tmp_path, caplog):
     assert 'p1: downloaded, but ffmpeg merge failed' in e['message']
     rc, e = run_worker(monkeypatch, tmp_path, {})
     assert 'no episode information' in e['message']
-    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 3, 'merge_flag': True, 'title': 't'}, 2: {'download_flag': 0, 'title': 't2'}})
+    rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 3, 'merge_flag': True, 'title': 't'}, 2: {'download_flag': 0, 'title': 't2'}}, playlist=True)
     assert 'p2: video download failed' in e['message'] and 'p1' not in e['message']
     assert 'episode p1: download_flag=3' in caplog.text and 'job failed:' in caplog.text
 
@@ -368,3 +369,45 @@ def test_job_title_is_limited_and_optional(authed):
 def test_worker_error_carries_the_title(monkeypatch, tmp_path):
     rc, e = run_worker(monkeypatch, tmp_path, {1: {'download_flag': 0, 'merge_flag': False, 'title': 'Some title'}})
     assert e['type'] == 'error' and e['title'] == 'Some title'
+
+
+# ---------------- multi-episode video, only one episode requested (seen in a real job log) ----------------
+def placeholders(first, n=15):
+    eps = {p: {'download_flag': 0, 'merge_flag': False, 'title': f'p{p}'} for p in range(2, n + 1)}
+    eps[1] = dict(first, title='p1')
+    return eps
+
+
+def test_other_episodes_placeholders_are_not_failures(monkeypatch, tmp_path):
+    eps = placeholders({'download_flag': 3, 'merge_flag': True})
+    rc, e = run_worker(monkeypatch, tmp_path, eps)
+    assert rc == 0 and e['type'] == 'result'
+
+
+def test_requested_episode_from_url_is_judged(monkeypatch, tmp_path):
+    from sole_bili_get.web import worker
+    eps = placeholders({'download_flag': 0, 'merge_flag': False})
+    eps[3] = {'download_flag': 3, 'merge_flag': True, 'title': 'p3'}
+    monkeypatch.setattr(worker, '_events', None, raising=False)
+    import io, json
+    from sole_bili_get import bili_get
+    FakeBili.result = eps
+    monkeypatch.setattr(bili_get, 'Bilibili', FakeBili)
+    monkeypatch.setattr('shutil.which', lambda n: '/usr/bin/ffmpeg')
+    ev = io.StringIO()
+    monkeypatch.setattr(worker, '_events', ev)
+    rc = worker.do_download({'url': GOOD + '?p=3', 'work_dir': str(tmp_path / 'w'), 'mode': 'merged', 'quality': 'MAX'})
+    assert rc == 0 #p3 is fine, the failed p1 placeholder was not requested
+
+
+def test_download_all_still_reports_missing_episodes(monkeypatch, tmp_path):
+    from sole_bili_get.web import worker
+    import io
+    from sole_bili_get import bili_get
+    FakeBili.result = placeholders({'download_flag': 3, 'merge_flag': True}, 3)
+    monkeypatch.setattr(bili_get, 'Bilibili', FakeBili)
+    monkeypatch.setattr('shutil.which', lambda n: '/usr/bin/ffmpeg')
+    monkeypatch.setattr(worker, '_events', io.StringIO())
+    rc = worker.do_download({'url': GOOD, 'work_dir': str(tmp_path / 'w'), 'mode': 'merged', 'quality': 'MAX', 'playlist': True})
+    assert rc == 1
+    assert 'p2: video download failed' in worker._events.getvalue() and 'p3: video download failed' in worker._events.getvalue()
