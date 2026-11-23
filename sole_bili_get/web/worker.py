@@ -23,6 +23,16 @@ def attach_core_logger(bili):
     bili.logger.addHandler(handler)
 
 
+def unique_path(directory, name):
+    '''never overwrite a file the user already has: "a.mp4" -> "a (1).mp4" -> "a (2).mp4"'''
+    base, ext = os.path.splitext(name)
+    path, i = os.path.join(directory, name), 0
+    while os.path.exists(path):
+        i += 1
+        path = os.path.join(directory, f'{base} ({i}){ext}')
+    return path
+
+
 def describe_files(root):
     out = []
     for r, _d, files in os.walk(root):
@@ -129,16 +139,20 @@ def do_download(req):
     out_root = os.path.join(work, 'bili_output')
     tmp_root = os.path.join(work, 'bili_tmp')
     log.info('files in output dir: %s', describe_files(out_root) if os.path.isdir(out_root) else 'none')
-    files_dir = os.path.join(work, 'files')
+    # finished files go to the configured save folder; the files of a failed job stay in the job dir (for debugging)
+    save_dir = (req.get('save_dir') or '') if ok else ''
+    files_dir = save_dir or os.path.join(work, 'files')
     os.makedirs(files_dir, exist_ok=True)
+    log.info('moving results into %s%s', files_dir, ' (save folder)' if save_dir else ' (job dir)')
     names = []
     if os.path.isdir(out_root):
         for root, _dirs, files in os.walk(out_root):
             for f in sorted(files):
                 if mode == 'video' and f.endswith('_audio.mp3'):
                     continue
-                shutil.move(os.path.join(root, f), os.path.join(files_dir, f))
-                names.append(f)
+                dest = unique_path(files_dir, f)
+                shutil.move(os.path.join(root, f), dest)
+                names.append(os.path.basename(dest))
     shutil.rmtree(out_root, ignore_errors=True)
     shutil.rmtree(tmp_root, ignore_errors=True)
     if not ok:
@@ -147,7 +161,7 @@ def do_download(req):
              title=(next(iter(eps.values())).get('title') or '') if eps else '')
         return 1
     log.info('job ok: %s', names)
-    emit(type='result', files=names, title=(next(iter(eps.values())).get('title') or ''))
+    emit(type='result', files=names, out_dir=files_dir, title=(next(iter(eps.values())).get('title') or ''))
     return 0
 
 

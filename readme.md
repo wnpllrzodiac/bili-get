@@ -51,7 +51,9 @@ bili-web --host 0.0.0.0 --port 8000   # 局域网访问
 ```
 
 - **登录**：用户名固定为`admin`，初始密码`admin`，**首次登录必须修改密码**（至少8位且不能为`admin`），之后可在“Settings”中再次修改。忘记密码：`bili-web --reset-password`（恢复为`admin`，下次登录需重新修改）。连续输错密码会被临时锁定（默认5次/5分钟/每IP）
-- **全局设置**：B站Cookie（可选，下载1080P及以上需要）。Cookie只保存在服务器上，不会返回给浏览器
+- **全局设置**（页面右上角“Settings”）：
+  - **保存目录（Save folder）**：服务器上的绝对路径，下载完成的文件会移动到这里；留空则保存在任务自己的目录（`<数据目录>/downloads/<任务id>/files/`）。目录不存在会自动创建，必须对运行bili-web的用户可写（保存时会写入测试文件校验）。同名文件不会被覆盖（自动加` (1)`后缀）；删除任务不会删除保存目录里的文件；下载失败的任务不会写入该目录。修改只对之后的任务生效，已完成的任务仍从原位置下载
+  - **B站Cookie**（可选，下载1080P及以上需要）。Cookie只保存在服务器上，不会返回给浏览器
 - **配置**（环境变量或命令行参数）：
 
   | 环境变量 | 参数 | 默认值 | 说明 |
@@ -59,7 +61,7 @@ bili-web --host 0.0.0.0 --port 8000   # 局域网访问
   | `BILI_WEB_HOST` | `--host` | `127.0.0.1` | 监听地址，局域网用`0.0.0.0` |
   | `BILI_WEB_PORT` | `--port` | `8000` | 监听端口 |
   | `BILI_WEB_ROOT_PATH` | `--root-path` | 空 | 子路径前缀，如`/hp/bilidown` |
-  | `BILI_WEB_DATA_DIR` | `--data-dir` | `~/.bili-web` | 数据库和下载文件目录 |
+  | `BILI_WEB_DATA_DIR` | `--data-dir` | `<程序目录>/bili-web-data` | 数据库和下载文件目录（权限0700，已被`.gitignore`忽略）。源码方式运行时为仓库根目录（`setup.py`所在目录），`pip install`安装后为当前工作目录 |
   | `BILI_WEB_CONCURRENCY` | | `2` | 同时下载的任务数 |
 
 - **Nginx反向代理（WAN）**：TLS在Nginx终止，bili-web自身只提供HTTP，不要把它的端口直接暴露到公网。`proxy_pass`末尾带`/`（去掉前缀）或不带（保留前缀）都支持；前缀来自`BILI_WEB_ROOT_PATH`，或Nginx传入的`X-Forwarded-Prefix`头（环境变量优先）。以`/hp/bilidown/`为例：
@@ -79,7 +81,7 @@ bili-web --host 0.0.0.0 --port 8000   # 局域网访问
 
   `X-Forwarded-For`/`X-Forwarded-Proto`仅信任来自本机的代理（uvicorn默认`FORWARDED_ALLOW_IPS=127.0.0.1`），代理在其他机器上时请设置该环境变量。Session Cookie的`Path`限定为子路径，HTTPS下自动加`Secure`
 - **日志（下载失败时排查）**：失败的任务会显示原因（如`p1: video download failed`、`downloaded, but ffmpeg merge failed`），点击任务下的“View log”可直接查看该任务的完整日志，包含请求参数、ffmpeg路径、每集的下载/合并状态、ffmpeg的错误输出和异常堆栈（不含Cookie）。日志文件位置：
-  - 单个任务：`<数据目录>/downloads/<任务id>/worker.log`（默认`~/.bili-web/downloads/<id>/worker.log`，失败任务的页面上会显示完整路径；删除任务时一并删除）
+  - 单个任务：`<数据目录>/downloads/<任务id>/worker.log`（默认`<程序目录>/bili-web-data/downloads/<id>/worker.log`，失败任务的页面上会显示完整路径；删除任务时一并删除）
   - 服务端：`<数据目录>/bili-web.log`（任务创建/开始/失败、登录失败，失败时附带任务日志末尾15行；自动轮转）
 - 只接受`https://www.bilibili.com/video/BV...`（或`av...`）形式的链接，暂不支持`b23.tv`短链
 - 测试：`pip install pytest httpx && python -m pytest tests`（使用模拟的下载进程，无需联网）

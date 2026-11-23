@@ -110,6 +110,7 @@ class JobManager:
         '''cancels if still active, then removes record and files'''
         self.cancel(job_id)
         self.db.delete_job(job_id)
+        #only the job's own dir (logs, files of the default location) is removed, never files in a user chosen save folder
         shutil.rmtree(self.job_dir(job_id), ignore_errors=True)
 
     def _loop(self):
@@ -127,7 +128,7 @@ class JobManager:
             return #deleted or canceled while waiting
         work = self.job_dir(job_id)
         os.makedirs(work, exist_ok=True)
-        req = dict(job['params'], url=job['url'], work_dir=work)
+        req = dict(job['params'], url=job['url'], work_dir=work, save_dir=self.db.get_setting('save_dir') or '')
         cookie = self.db.get_setting('bili_cookie')
         proc = _spawn('download', req, cookie, os.path.join(work, 'worker.log'))
         with self._lock:
@@ -136,13 +137,14 @@ class JobManager:
                 _kill(proc)
         self.db.update_job(job_id, state='running', stage='analyzing')
         log.info('job %s started, worker pid %s, log: %s', job_id, proc.pid, os.path.join(work, 'worker.log'))
+        out_dir = ''
         error, files, title = None, None, job['title'] or '' #known from the analyse step, a failed job keeps it
         for evt in _events(proc):
             t = evt.get('type')
             if t == 'progress':
                 self.db.update_job(job_id, stage=evt.get('stage', ''), percent=evt.get('percent', 0))
             elif t == 'result':
-                files, title = evt.get('files', []), evt.get('title') or title
+                files, title, out_dir = evt.get('files', []), evt.get('title') or title, evt.get('out_dir') or ''
             elif t == 'error':
                 error = evt.get('message')
                 title = evt.get('title') or title
@@ -157,7 +159,7 @@ class JobManager:
         if canceled:
             self.db.update_job(job_id, state='canceled', stage='')
         elif files is not None and error is None:
-            self.db.update_job(job_id, state='done', stage='', percent=100, files=files, title=title)
+            self.db.update_job(job_id, state='done', stage='', percent=100, files=files, title=title, out_dir=out_dir)
         else:
             log.error('job %s failed: %s\n--- last lines of worker.log ---\n%s', job_id, error,
                       ''.join(tail_file(os.path.join(work, 'worker.log'), 4096).splitlines(True)[-15:]))

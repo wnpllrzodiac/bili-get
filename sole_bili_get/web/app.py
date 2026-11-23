@@ -1,4 +1,4 @@
-import asyncio, json, logging, logging.handlers, os, re, tempfile, uuid
+import asyncio, json, logging, logging.handlers, os, re, shutil, tempfile, uuid
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -70,7 +70,29 @@ class JobReq(BaseModel):
 
 
 class SettingsReq(BaseModel):
+    #only the fields that are present in the request are changed
     cookie: Optional[str] = None #None/'' clears it
+    save_dir: Optional[str] = None #None/'' goes back to the default (the job's own folder)
+
+
+def validate_save_dir(raw):
+    '''returns (absolute path, None) or (None, error message). The folder is created when it doesn't exist.'''
+    raw = (raw or '').strip()
+    if '\x00' in raw:
+        return None, 'invalid path'
+    path = os.path.expanduser(raw)
+    if not os.path.isabs(path):
+        return None, 'please enter an absolute path (for example /data/bilibili)'
+    path = os.path.normpath(path)
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, f'.bili-web-write-test-{uuid.uuid4().hex}')
+        with open(probe, 'wb') as f:
+            f.write(b'x')
+        os.remove(probe)
+    except OSError as e:
+        return None, f'cannot write into this folder: {e.strerror or e}'
+    return path, None
 
 
 def setup_server_log(cfg):
@@ -172,21 +194,39 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         return {'ok': True}
 
     # ---------------- full access ----------------
-    def _cookie_info():
+    def _settings_view():
         c = db.get_setting('bili_cookie') or ''
-        return {'cookie_set': bool(c), 'cookie_tail': ('…' + c[-4:]) if len(c) > 8 else ''}
+        save_dir = db.get_setting('save_dir') or ''
+        view = {'cookie_set': bool(c), 'cookie_tail': ('…' + c[-4:]) if len(c) > 8 else '',
+                'save_dir': save_dir, 'default_save_dir': cfg.jobs_dir + os.sep + '<job id>' + os.sep + 'files'}
+        try:
+            view['free_bytes'] = shutil.disk_usage(save_dir if save_dir and os.path.isdir(save_dir) else cfg.data_dir).free
+        except OSError:
+            pass
+        return view
 
     @app.get('/api/settings')
     def get_settings(_user=Depends(full_session)):
-        return _cookie_info()
+        return _settings_view()
 
     @app.put('/api/settings')
     def put_settings(req: SettingsReq, _user=Depends(full_session)):
-        cookie = (req.cookie or '').strip()
-        if '\n' in cookie or '\r' in cookie:
-            raise HTTPException(400, 'invalid cookie')
-        db.set_setting('bili_cookie', cookie or None)
-        return _cookie_info()
+        given = getattr(req, 'model_fields_set', None) or getattr(req, '__fields_set__', set())
+        if 'cookie' in given:
+            cookie = (req.cookie or '').strip()
+            if '\n' in cookie or '\r' in cookie:
+                raise HTTPException(400, 'invalid cookie')
+            db.set_setting('bili_cookie', cookie or None)
+        if 'save_dir' in given:
+            if (req.save_dir or '').strip():
+                path, err = validate_save_dir(req.save_dir)
+                if err:
+                    raise HTTPException(400, err)
+                db.set_setting('save_dir', path)
+                logging.getLogger('bili-web').info('save folder set to %s', path)
+            else:
+                db.set_setting('save_dir', None)
+        return _settings_view()
 
     @app.post('/api/analyze')
     async def analyze(req: AnalyzeReq, _user=Depends(full_session)):
@@ -204,6 +244,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         view = {k: j[k] for k in ('id', 'url', 'state', 'stage', 'percent', 'title', 'error', 'files', 'created', 'updated')}
         view['params'] = j['params']
         view['log_file'] = os.path.join(jobs.job_dir(j['id']), 'worker.log')
+        view['out_dir'] = j.get('out_dir') or ''
         return view
 
     @app.post('/api/jobs')
@@ -282,7 +323,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         j = _get_job(job_id)
         if j['state'] != 'done' or name not in j['files']: #only names recorded by the worker are served (no path traversal)
             raise HTTPException(404, 'no such file')
-        path = os.path.join(jobs.job_dir(job_id), 'files', name)
+        path = os.path.join(j.get('out_dir') or os.path.join(jobs.job_dir(job_id), 'files'), name) #out_dir was recorded by the worker, not by the client
         if not os.path.isfile(path):
             raise HTTPException(404, 'file is gone')
         return FileResponse(path, filename=name)

@@ -74,16 +74,31 @@ function passwordView(forced, oldPw) {
 async function settingsView() {
   bar.hidden = false;
   const s = await api('GET', 'api/settings');
-  const err = h('div', {class: 'err'});
+  const err = h('div', {class: 'err'}), ok = h('div', {class: 'muted'});
   const ck = h('input', {type: 'password', placeholder: s.cookie_set ? 'cookie is set (' + s.cookie_tail + '), enter a new one to replace' : 'SESSDATA=...; bili_jct=...', autocomplete: 'off'});
+  const dir = h('input', {type: 'text', value: s.save_dir, placeholder: s.default_save_dir, autocomplete: 'off'});
+  const free = s.free_bytes != null ? ` Free space: ${(s.free_bytes / 1073741824).toFixed(1)} GB.` : '';
+  const save = async (body, msg) => {
+    err.textContent = ''; ok.textContent = '';
+    try { await api('PUT', 'api/settings', body); await settingsView(); app.querySelector('.msg').textContent = msg; }
+    catch (e) { err.textContent = e.message; }
+  };
   show(h('div', {class: 'card'}, h('h2', {}, 'Global settings'),
-    h('label', {}, 'Bilibili cookie (optional, needed for 1080P and above)'), ck,
+    h('label', {}, 'Save folder (absolute path on the server)'), dir,
+    h('p', {class: 'muted'}, 'Finished downloads are moved here. Leave it empty to keep them in the job folder (', s.default_save_dir, '). ',
+      'The folder is created if needed and must be writable by the server. A file that already exists is never overwritten (a " (1)" suffix is added). ',
+      'Deleting a job never deletes files in this folder.', free),
+    h('div', {class: 'row'}, h('button', {onclick: () => save({save_dir: dir.value}, 'Save folder updated.')}, 'Save folder'),
+      s.save_dir ? h('button', {class: 'secondary', onclick: () => save({save_dir: ''}, 'Save folder reset to the default.')}, 'Use default') : null),
+    h('label', {style: 'margin-top:18px'}, 'Bilibili cookie (optional, needed for 1080P and above)'), ck,
     h('p', {class: 'muted'}, 'Stored on the server only, it is never sent back to the browser.'),
     h('div', {class: 'row'},
-      h('button', {onclick: async () => { try { await api('PUT', 'api/settings', {cookie: ck.value}); settingsView(); } catch (e) { err.textContent = e.message; } }}, 'Save cookie'),
-      s.cookie_set ? h('button', {class: 'secondary', onclick: async () => { await api('PUT', 'api/settings', {cookie: ''}); settingsView(); }}, 'Remove cookie') : null,
+      h('button', {onclick: () => save({cookie: ck.value}, 'Cookie updated.')}, 'Save cookie'),
+      s.cookie_set ? h('button', {class: 'secondary', onclick: () => save({cookie: ''}, 'Cookie removed.')}, 'Remove cookie') : null),
+    h('div', {class: 'msg muted', style: 'margin-top:8px'}), err, ok,
+    h('div', {class: 'row', style: 'margin-top:16px'},
       h('button', {class: 'secondary', onclick: () => passwordView(false)}, 'Change password'),
-      h('button', {class: 'secondary', onclick: mainView}, 'Back')), err));
+      h('button', {class: 'secondary', onclick: mainView}, 'Back'))));
 }
 
 // ---------- main: analyse -> options -> download, plus job list ----------
@@ -157,6 +172,7 @@ function mainView() {
       j.state !== 'queued' ? h('div', {}, h('button', {class: 'link', onclick: () => toggleLog(j.id)}, openLogs.has(j.id) ? 'Hide log' : 'View log'),
         j.state === 'failed' ? h('span', {class: 'muted'}, ' log file on the server: ', j.log_file) : null) : null,
       openLogs.has(j.id) ? h('pre', {class: 'log'}, openLogs.get(j.id)) : null,
+      j.state === 'done' && j.out_dir ? h('div', {class: 'muted'}, 'Saved in ', j.out_dir) : null,
       j.state === 'done' ? h('div', {}, j.files.map(f => h('div', {}, h('a', {href: `api/jobs/${j.id}/files/${encodeURIComponent(f)}`}, f)))) : null);
   }
   show(h('div', {class: 'card'}, h('h2', {}, 'Download a Bilibili video'), h('div', {class: 'row'}, url, goBtn), err), detail, jobsBox);

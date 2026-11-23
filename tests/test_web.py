@@ -411,3 +411,135 @@ def test_download_all_still_reports_missing_episodes(monkeypatch, tmp_path):
     rc = worker.do_download({'url': GOOD, 'work_dir': str(tmp_path / 'w'), 'mode': 'merged', 'quality': 'MAX', 'playlist': True})
     assert rc == 1
     assert 'p2: video download failed' in worker._events.getvalue() and 'p3: video download failed' in worker._events.getvalue()
+
+
+# ---------------- data directory ----------------
+def test_default_data_dir_is_inside_the_app_folder(monkeypatch, tmp_path):
+    from sole_bili_get.web import config
+    monkeypatch.delenv('BILI_WEB_DATA_DIR', raising=False)
+    assert config.default_data_dir() == os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(config.__file__)))), 'bili-web-data')
+    assert not config.default_data_dir().startswith(os.path.expanduser('~/.bili-web'))
+
+
+def test_default_data_dir_falls_back_to_cwd_when_installed(monkeypatch, tmp_path):
+    from sole_bili_get.web import config
+    monkeypatch.setattr(config.os.path, 'isfile', lambda p: False) #no setup.py next to the package: a pip install
+    monkeypatch.chdir(tmp_path)
+    assert config.default_data_dir() == os.path.join(str(tmp_path), 'bili-web-data')
+
+
+def test_env_var_overrides_and_dir_is_private(monkeypatch, tmp_path):
+    monkeypatch.setenv('BILI_WEB_DATA_DIR', str(tmp_path / 'elsewhere'))
+    cfg = Config()
+    assert cfg.data_dir == str(tmp_path / 'elsewhere')
+    assert oct(os.stat(cfg.data_dir).st_mode & 0o777) == '0o700'
+    assert os.path.isdir(cfg.jobs_dir)
+
+
+# ---------------- save folder setting ----------------
+def test_save_folder_setting_validation(authed, tmp_path):
+    put = lambda **kw: authed.put('api/settings', json=kw, headers=H)
+    assert authed.get('api/settings').json()['save_dir'] == ''
+    r = put(save_dir='relative/path')
+    assert r.status_code == 400 and 'absolute' in r.json()['detail']
+    blocker = tmp_path / 'a-file'
+    blocker.write_text('x')
+    assert put(save_dir=str(blocker / 'sub')).status_code == 400 #a file is in the way, can't create the folder
+    target = tmp_path / 'my' / 'videos'
+    r = put(save_dir=str(target))
+    assert r.status_code == 200 and r.json()['save_dir'] == str(target) and target.is_dir()
+    assert list(target.iterdir()) == [] #the write probe is removed again
+    assert r.json()['free_bytes'] > 0
+    assert authed.get('api/settings').json()['save_dir'] == str(target)
+    assert put(save_dir='').json()['save_dir'] == '' #back to the default
+
+
+def test_settings_fields_are_independent(authed, tmp_path):
+    authed.put('api/settings', json={'cookie': 'SESSDATA=abcdefghijkl'}, headers=H)
+    r = authed.put('api/settings', json={'save_dir': str(tmp_path / 'v')}, headers=H).json()
+    assert r['cookie_set'] is True and r['save_dir'] == str(tmp_path / 'v') #saving the folder doesn't wipe the cookie
+    r = authed.put('api/settings', json={'cookie': ''}, headers=H).json()
+    assert r['cookie_set'] is False and r['save_dir'] == str(tmp_path / 'v') #and the other way round
+
+
+def test_job_saves_into_the_save_folder(authed, tmp_path):
+    target = tmp_path / 'videos'
+    authed.put('api/settings', json={'save_dir': str(target)}, headers=H)
+    j = wait_state(authed, authed.post('api/jobs', json={'url': GOOD}, headers=H).json()['id'], ('done', 'failed'))
+    assert j['state'] == 'done' and j['out_dir'] == str(target)
+    assert (target / 'demo.mp4').read_bytes() == b'fake-video:merged'
+    assert authed.get(f"api/jobs/{j['id']}/files/demo.mp4").content == b'fake-video:merged' #served from where it was saved
+    authed.delete(f"api/jobs/{j['id']}", headers=H)
+    assert (target / 'demo.mp4').exists() #deleting a job never deletes the user's files
+    assert not os.path.exists(os.path.join(authed.app.state.cfg.jobs_dir, j['id']))
+
+
+def test_jobs_before_the_setting_changed_keep_working(authed, tmp_path):
+    j = wait_state(authed, authed.post('api/jobs', json={'url': GOOD}, headers=H).json()['id'], ('done',))
+    authed.put('api/settings', json={'save_dir': str(tmp_path / 'later')}, headers=H)
+    assert authed.get(f"api/jobs/{j['id']}/files/demo.mp4").status_code == 200 #still served from its recorded folder
+    assert j['out_dir'].endswith(os.path.join(j['id'], 'files'))
+
+
+def test_old_database_gets_the_out_dir_column(tmp_path):
+    import sqlite3
+    from sole_bili_get.web.db import Database
+    path = str(tmp_path / 'old.sqlite3')
+    c = sqlite3.connect(path)
+    c.executescript("CREATE TABLE jobs (id TEXT PRIMARY KEY, url TEXT NOT NULL, params TEXT NOT NULL, state TEXT NOT NULL,"
+                    " stage TEXT DEFAULT '', percent REAL DEFAULT 0, title TEXT DEFAULT '', error TEXT DEFAULT '',"
+                    " files TEXT DEFAULT '[]', created REAL NOT NULL, updated REAL NOT NULL);"
+                    "INSERT INTO jobs(id,url,params,state,created,updated) VALUES('x','u','{}','done',1,1);")
+    c.commit(); c.close()
+    db = Database(path)
+    assert db.get_job('x')['out_dir'] == ''
+
+
+class FilesBili(FakeBili):
+    '''pretends to have downloaded a file'''
+    def __init__(self, url, base_dir=None, **kw):
+        super().__init__(url, **kw)
+        self.base = base_dir
+
+    def start(self):
+        d = os.path.join(self.base, 'bili_output', 'BV1xx411c7mD')
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, 'video.mp4'), 'wb') as f:
+            f.write(b'new')
+        self.playlists_info = dict(FakeBili.result)
+
+
+def run_files_worker(monkeypatch, tmp_path, playlists, save_dir):
+    import io, json
+    from sole_bili_get import bili_get
+    from sole_bili_get.web import worker
+    FakeBili.result = playlists
+    monkeypatch.setattr(bili_get, 'Bilibili', FilesBili)
+    monkeypatch.setattr('shutil.which', lambda n: '/usr/bin/ffmpeg')
+    ev = io.StringIO()
+    monkeypatch.setattr(worker, '_events', ev)
+    work = tmp_path / 'work'
+    rc = worker.do_download({'url': GOOD, 'work_dir': str(work), 'mode': 'merged', 'quality': 'MAX', 'save_dir': save_dir})
+    evts = [json.loads(l[len(worker.EVENT_PREFIX):]) for l in ev.getvalue().splitlines() if l.startswith(worker.EVENT_PREFIX)]
+    return rc, evts[-1], work
+
+
+def test_existing_files_are_never_overwritten(monkeypatch, tmp_path):
+    save = tmp_path / 'save'
+    save.mkdir()
+    (save / 'video.mp4').write_bytes(b'precious')
+    ok = {1: {'download_flag': 3, 'merge_flag': True, 'title': 't'}}
+    rc, e, _ = run_files_worker(monkeypatch, tmp_path, ok, str(save))
+    assert rc == 0 and e['files'] == ['video (1).mp4'] and e['out_dir'] == str(save)
+    assert (save / 'video.mp4').read_bytes() == b'precious' and (save / 'video (1).mp4').read_bytes() == b'new'
+    rc, e, _ = run_files_worker(monkeypatch, tmp_path / 'again', ok, str(save))
+    assert e['files'] == ['video (2).mp4']
+
+
+def test_failed_job_does_not_touch_the_save_folder(monkeypatch, tmp_path):
+    save = tmp_path / 'save'
+    save.mkdir()
+    bad = {1: {'download_flag': 1, 'merge_flag': False, 'title': 't'}}
+    rc, e, work = run_files_worker(monkeypatch, tmp_path, bad, str(save))
+    assert rc == 1 and list(save.iterdir()) == []
+    assert (work / 'files' / 'video.mp4').exists() #partial result stays in the job folder for debugging

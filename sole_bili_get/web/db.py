@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     title TEXT DEFAULT '',
     error TEXT DEFAULT '',
     files TEXT DEFAULT '[]',
+    out_dir TEXT DEFAULT '',
     created REAL NOT NULL,
     updated REAL NOT NULL
 );
@@ -27,6 +28,9 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            cols = [r['name'] for r in self._conn.execute('PRAGMA table_info(jobs)')]
+            if 'out_dir' not in cols: #database created by an older version
+                self._conn.execute("ALTER TABLE jobs ADD COLUMN out_dir TEXT DEFAULT ''")
             self._conn.commit()
 
     def get_setting(self, key, default=None):

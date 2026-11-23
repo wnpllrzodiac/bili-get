@@ -20,8 +20,8 @@ else:
     if 'BV1bad' in req['url']:
         out(type='error', message='download failed')
         sys.exit(1)
-    d = os.path.join(req['work_dir'], 'files')
+    d = req.get('save_dir') or os.path.join(req['work_dir'], 'files')
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, 'demo.mp4'), 'wb') as f:
         f.write(b'fake-video:' + req['mode'].encode())
-    out(type='result', files=['demo.mp4'], title='demo')
+    out(type='result', files=['demo.mp4'], out_dir=d, title='demo')
