@@ -24,4 +24,5 @@ else:
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, 'demo.mp4'), 'wb') as f:
         f.write(b'fake-video:' + req['mode'].encode())
-    out(type='result', files=['demo.mp4'], out_dir=d, title='demo')
+    out(type='result', media={'files': {'demo.mp4': {'width': 640, 'height': 360, 'vcodec': 'h264', 'acodec': 'aac', 'duration': 8441.2, 'bitrate': 430000, 'size': 11}},
+                              'download': {'bytes': 523000000, 'seconds': 41.0, 'speed': 12756097}}, files=['demo.mp4'], out_dir=d, title='demo')

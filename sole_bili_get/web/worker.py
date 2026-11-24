@@ -4,7 +4,7 @@ One subprocess per task because the downloader keeps process-wide state (sole_bi
 pid based locks). Request json comes from stdin, the bilibili cookie from env BILI_COOKIE, events go to
 stdout as lines prefixed by EVENT_PREFIX (everything else printed by the downloader is discarded).
 '''
-import json, logging, os, re, shutil, sys, time, traceback
+import json, logging, os, re, shutil, subprocess, sys, time, traceback
 
 EVENT_PREFIX = '@@EVT@@ '
 _events = None
@@ -40,6 +40,49 @@ def describe_files(root):
             fp = os.path.join(r, f)
             out.append(f'{os.path.relpath(fp, root)} ({os.path.getsize(fp)} bytes)')
     return out
+
+
+_DUR = re.compile(r'Duration: (\d+):(\d+):(\d+(?:\.\d+)?)(?:, start: [\d.]+)?(?:, bitrate: (\d+) kb/s)?')
+_VID = re.compile(r'Stream #\S+: Video: (\w+).*?, (\d{2,5})x(\d{2,5})')
+_AUD = re.compile(r'Stream #\S+: Audio: (\w+)')
+_KBS = re.compile(r'(\d+) kb/s')
+
+
+def parse_media_info(text):
+    '''parses the stderr of `ffmpeg -i <file>` (ffprobe is not always installed next to ffmpeg)'''
+    info = {}
+    m = _DUR.search(text)
+    if m:
+        info['duration'] = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
+        if m[4]:
+            info['bitrate'] = int(m[4]) * 1000
+    for line in text.splitlines():
+        v, a = _VID.search(line), _AUD.search(line)
+        if v and 'vcodec' not in info and 'attached pic' not in line: #a cover image inside an mp3 is not a video
+            info['vcodec'], info['width'], info['height'] = v[1], int(v[2]), int(v[3])
+            k = _KBS.search(line)
+            if k:
+                info['vbitrate'] = int(k[1]) * 1000
+        elif a and 'acodec' not in info:
+            info['acodec'] = a[1]
+            k = _KBS.search(line)
+            if k:
+                info['abitrate'] = int(k[1]) * 1000
+    return info
+
+
+def probe_file(ffmpeg, path):
+    if not ffmpeg:
+        return {}
+    try:
+        r = subprocess.run([ffmpeg, '-hide_banner', '-i', path], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=30) #exits 1 because there is no output file, that is expected
+        info = parse_media_info(r.stderr.decode('utf-8', 'replace'))
+    except Exception as e:
+        log.warning('cannot probe %s: %s', path, e)
+        return {}
+    info['size'] = os.path.getsize(path)
+    return info
 
 
 def emit(**evt):
@@ -84,12 +127,17 @@ def do_download(req):
     work = req['work_dir']
     os.makedirs(work, exist_ok=True)
     stages = {'merged': ['video', 'audio'], 'video': ['video'], 'audio': ['audio']}[mode]
-    st = {'idx': 0, 'last': 0.0}
+    st = {'idx': 0, 'last': 0.0, 't0': None, 't1': None, 'bytes': 0} #t0..t1 = time spent downloading video/audio
 
     def on_progress(title, count, total):
         done = total > 0 and count >= total
         stage = 'cover' if 'image' in str(title) else (stages[min(st['idx'], len(stages) - 1)])
         now = time.time()
+        if stage != 'cover' and st['t0'] is None:
+            st['t0'] = now
+        if done and stage != 'cover':
+            st['bytes'] += total
+            st['t1'] = now
         if done or now - st['last'] >= 0.5:
             st['last'] = now
             emit(type='progress', stage=stage, percent=round(100.0 * count / total, 1) if total else 0,
@@ -161,7 +209,15 @@ def do_download(req):
              title=(next(iter(eps.values())).get('title') or '') if eps else '')
         return 1
     log.info('job ok: %s', names)
-    emit(type='result', files=names, out_dir=files_dir, title=(next(iter(eps.values())).get('title') or ''))
+    media = {'files': {}}
+    for n in names:
+        if re.search(r'\.(mp4|m4v|webm|mp3|m4a|aac)$', n, re.I):
+            media['files'][n] = probe_file(ffmpeg, os.path.join(files_dir, n))
+    if st['t0'] is not None and st['t1'] is not None and st['bytes']:
+        secs = max(st['t1'] - st['t0'], 0.001)
+        media['download'] = {'bytes': st['bytes'], 'seconds': round(secs, 2), 'speed': int(st['bytes'] / secs)}
+    log.info('media info: %s', media)
+    emit(type='result', media=media, files=names, out_dir=files_dir, title=(next(iter(eps.values())).get('title') or ''))
     return 0
 
 

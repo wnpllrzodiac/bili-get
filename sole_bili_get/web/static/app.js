@@ -15,6 +15,17 @@ function h(tag, attrs, ...kids) {
 }
 const AUDIO_RE = /\.(mp3|m4a|aac|ogg|opus|wav|flac)$/i;
 const PLAYABLE = /\.(mp4|m4v|webm|mp3|m4a|aac|ogg|opus|wav|flac)$/i;
+const fmtSize = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : Math.round(n / 1e3) + ' KB';
+const fmtRate = bps => bps >= 1e6 ? (bps / 1e6).toFixed(2) + ' Mbps' : Math.round(bps / 1e3) + ' kbps';
+function fmtDur(s) {
+  s = Math.round(s); const p = n => String(n).padStart(2, '0');
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}` : `${Math.floor(s / 60)}:${p(s % 60)}`;
+}
+function mediaLine(m) { //m: what the worker probed from the finished file; any field may be missing
+  const codecs = [m.vcodec, m.acodec].filter(Boolean).join(' / ');
+  return [m.width ? `${m.width}x${m.height}` : null, codecs || null, m.bitrate ? fmtRate(m.bitrate) : null,
+          m.duration ? fmtDur(m.duration) : null, m.size ? fmtSize(m.size) : null].filter(Boolean).join(' \u00b7 ');
+}
 // all urls are relative so the app works under any reverse proxy prefix
 async function api(method, url, body) {
   const res = await fetch(url, {
@@ -180,7 +191,12 @@ function mainView() {
         j.state === 'failed' ? h('span', {class: 'muted'}, ' log file on the server: ', j.log_file) : null) : null,
       openLogs.has(j.id) ? h('pre', {class: 'log'}, openLogs.get(j.id)) : null,
       j.state === 'done' && j.out_dir ? h('div', {class: 'muted'}, 'Saved in ', j.out_dir) : null,
-      j.state === 'done' ? h('div', {}, j.files.map(f => h('div', {}, h('a', {href: `api/jobs/${j.id}/files/${encodeURIComponent(f)}`}, f)))) : null);
+      j.state === 'done' ? h('div', {}, j.files.map(f => {
+        const line = j.media && j.media.files && j.media.files[f] ? mediaLine(j.media.files[f]) : '';
+        return h('div', {}, h('a', {href: `api/jobs/${j.id}/files/${encodeURIComponent(f)}`}, f), line ? h('div', {class: 'muted'}, line) : null);
+      })) : null,
+      j.state === 'done' && j.media && j.media.download ? h('div', {class: 'muted'}, 'Downloaded ', fmtSize(j.media.download.bytes),
+        ' in ', fmtDur(j.media.download.seconds), ' (avg ', fmtSize(j.media.download.speed), '/s)') : null);
   }
   show(h('div', {class: 'card'}, h('h2', {}, 'Download a Bilibili video'), h('div', {class: 'row'}, url, goBtn), err), detail, jobsBox);
   loadJobs();

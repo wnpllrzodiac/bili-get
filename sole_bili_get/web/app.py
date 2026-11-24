@@ -245,6 +245,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         view['params'] = j['params']
         view['log_file'] = os.path.join(jobs.job_dir(j['id']), 'worker.log')
         view['out_dir'] = j.get('out_dir') or ''
+        view['media'] = j.get('media') or {}
         return view
 
     @app.post('/api/jobs')

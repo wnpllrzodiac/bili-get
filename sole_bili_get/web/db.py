@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT DEFAULT '',
     files TEXT DEFAULT '[]',
     out_dir TEXT DEFAULT '',
+    media TEXT DEFAULT '{}',
     created REAL NOT NULL,
     updated REAL NOT NULL
 );
@@ -31,6 +32,8 @@ class Database:
             cols = [r['name'] for r in self._conn.execute('PRAGMA table_info(jobs)')]
             if 'out_dir' not in cols: #database created by an older version
                 self._conn.execute("ALTER TABLE jobs ADD COLUMN out_dir TEXT DEFAULT ''")
+            if 'media' not in cols:
+                self._conn.execute("ALTER TABLE jobs ADD COLUMN media TEXT DEFAULT '{}'")
             self._conn.commit()
 
     def get_setting(self, key, default=None):
@@ -57,6 +60,8 @@ class Database:
     def update_job(self, job_id, **fields):
         if 'files' in fields:
             fields['files'] = json.dumps(fields['files'])
+        if 'media' in fields:
+            fields['media'] = json.dumps(fields['media'])
         fields['updated'] = time.time()
         cols = ','.join(f'{k}=?' for k in fields)
         with self._lock:
@@ -67,6 +72,7 @@ class Database:
         d = dict(row)
         d['params'] = json.loads(d['params'])
         d['files'] = json.loads(d['files'])
+        d['media'] = json.loads(d.get('media') or '{}')
         return d
 
     def get_job(self, job_id):

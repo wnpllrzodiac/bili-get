@@ -137,7 +137,7 @@ class JobManager:
                 _kill(proc)
         self.db.update_job(job_id, state='running', stage='analyzing')
         log.info('job %s started, worker pid %s, log: %s', job_id, proc.pid, os.path.join(work, 'worker.log'))
-        out_dir = ''
+        out_dir, media = '', {}
         error, files, title = None, None, job['title'] or '' #known from the analyse step, a failed job keeps it
         for evt in _events(proc):
             t = evt.get('type')
@@ -145,6 +145,7 @@ class JobManager:
                 self.db.update_job(job_id, stage=evt.get('stage', ''), percent=evt.get('percent', 0))
             elif t == 'result':
                 files, title, out_dir = evt.get('files', []), evt.get('title') or title, evt.get('out_dir') or ''
+                media = evt.get('media') or {}
             elif t == 'error':
                 error = evt.get('message')
                 title = evt.get('title') or title
@@ -159,7 +160,7 @@ class JobManager:
         if canceled:
             self.db.update_job(job_id, state='canceled', stage='')
         elif files is not None and error is None:
-            self.db.update_job(job_id, state='done', stage='', percent=100, files=files, title=title, out_dir=out_dir)
+            self.db.update_job(job_id, state='done', stage='', percent=100, files=files, title=title, out_dir=out_dir, media=media)
         else:
             log.error('job %s failed: %s\n--- last lines of worker.log ---\n%s', job_id, error,
                       ''.join(tail_file(os.path.join(work, 'worker.log'), 4096).splitlines(True)[-15:]))

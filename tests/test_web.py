@@ -158,6 +158,7 @@ def test_job_lifecycle(authed):
     assert j['state'] == 'done' and j['files'] == ['demo.mp4'] and j['params']['mode'] == 'audio' and j['params']['quality'] == '32'
     f = authed.get(f"api/jobs/{j['id']}/files/demo.mp4")
     assert f.status_code == 200 and f.content == b'fake-video:audio'
+    assert j['media']['files']['demo.mp4']['height'] == 360 and j['media']['download']['speed'] > 0
     assert 'attachment' in f.headers['content-disposition']
     v = authed.get(f"api/jobs/{j['id']}/files/demo.mp4?inline=1", headers={'Range': 'bytes=0-3'}) #what the in-page player requests
     assert v.status_code == 206 and v.content == b'fake' and v.headers['content-disposition'].startswith('inline')
@@ -546,3 +547,23 @@ def test_failed_job_does_not_touch_the_save_folder(monkeypatch, tmp_path):
     rc, e, work = run_files_worker(monkeypatch, tmp_path, bad, str(save))
     assert rc == 1 and list(save.iterdir()) == []
     assert (work / 'files' / 'video.mp4').exists() #partial result stays in the job folder for debugging
+
+
+SAMPLE = """Input #0, mov,mp4,m4a,fragmented, from 'a.mp4':
+  Duration: 02:20:41.23, start: 0.000000, bitrate: 430 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 640x360 [SAR 1:1 DAR 16:9], 300 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+At least one output file must be specified
+"""
+
+
+def test_parse_media_info():
+    from sole_bili_get.web.worker import parse_media_info
+    m = parse_media_info(SAMPLE)
+    assert (m['width'], m['height'], m['vcodec'], m['acodec']) == (640, 360, 'h264', 'aac')
+    assert m['bitrate'] == 430000 and m['vbitrate'] == 300000 and m['abitrate'] == 128000
+    assert abs(m['duration'] - 8441.23) < 0.01
+    assert parse_media_info('garbage') == {}
+    mp3 = SAMPLE.replace('Video: h264', 'Video: mjpeg').replace('640x360 [SAR 1:1 DAR 16:9]', '300x300') .replace('(default)', '(attached pic)', 1)
+    assert 'vcodec' not in parse_media_info(mp3) #cover art in an audio file is not a video stream
+    assert parse_media_info('  Duration: N/A, bitrate: N/A') == {}
