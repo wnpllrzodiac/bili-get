@@ -29,3 +29,6 @@ button.secondary { background:#e9ecef; color:var(--fg); }
 .tag.done { background:#d5f0e0; color:var(--ok); } .tag.failed { background:#f8d7d3; color:var(--err); }
 a { color:var(--accent); }
 pre.log { background:#1e1e1e; color:#ddd; padding:10px; border-radius:6px; max-height:320px; overflow:auto; font:12px/1.4 ui-monospace, monospace; white-space:pre-wrap; word-break:break-all; }
+.overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:10; }
+.player { background:var(--card); border-radius:8px; padding:12px; width:min(900px, 94vw); max-height:94vh; }
+.player video, .player audio { width:100%; max-height:75vh; margin-top:8px; background:#000; border-radius:6px; }

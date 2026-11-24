@@ -319,14 +319,14 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         return {'ok': True}
 
     @app.get('/api/jobs/{job_id}/files/{name}')
-    def get_file(job_id: str, name: str, _user=Depends(full_session)):
+    def get_file(job_id: str, name: str, inline: bool = False, _user=Depends(full_session)):
         j = _get_job(job_id)
         if j['state'] != 'done' or name not in j['files']: #only names recorded by the worker are served (no path traversal)
             raise HTTPException(404, 'no such file')
         path = os.path.join(j.get('out_dir') or os.path.join(jobs.job_dir(job_id), 'files'), name) #out_dir was recorded by the worker, not by the client
         if not os.path.isfile(path):
             raise HTTPException(404, 'file is gone')
-        return FileResponse(path, filename=name)
+        return FileResponse(path, filename=name, content_disposition_type='inline' if inline else 'attachment') #inline is for the in-page player
 
     @app.exception_handler(HTTPException)
     async def http_exc(_request, exc):

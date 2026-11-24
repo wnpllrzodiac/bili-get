@@ -158,6 +158,9 @@ def test_job_lifecycle(authed):
     assert j['state'] == 'done' and j['files'] == ['demo.mp4'] and j['params']['mode'] == 'audio' and j['params']['quality'] == '32'
     f = authed.get(f"api/jobs/{j['id']}/files/demo.mp4")
     assert f.status_code == 200 and f.content == b'fake-video:audio'
+    assert 'attachment' in f.headers['content-disposition']
+    v = authed.get(f"api/jobs/{j['id']}/files/demo.mp4?inline=1", headers={'Range': 'bytes=0-3'}) #what the in-page player requests
+    assert v.status_code == 206 and v.content == b'fake' and v.headers['content-disposition'].startswith('inline')
     assert authed.get(f"api/jobs/{j['id']}/files/..%2F..%2Fworker.log").status_code == 404
     assert authed.get(f"api/jobs/{j['id']}/files/worker.log").status_code == 404 #only recorded names are served
     assert [x['id'] for x in authed.get('api/jobs').json()] == [j['id']]

@@ -13,6 +13,8 @@ function h(tag, attrs, ...kids) {
   for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 }
+const AUDIO_RE = /\.(mp3|m4a|aac|ogg|opus|wav|flac)$/i;
+const PLAYABLE = /\.(mp4|m4v|webm|mp3|m4a|aac|ogg|opus|wav|flac)$/i;
 // all urls are relative so the app works under any reverse proxy prefix
 async function api(method, url, body) {
   const res = await fetch(url, {
@@ -158,11 +160,16 @@ function mainView() {
     jobsBox.replaceChildren(...h('div', {}, h('h2', {}, 'Downloads'),
       jobs.length ? null : h('div', {class: 'muted'}, 'No downloads yet.'), jobs.map(jobRow)).childNodes);
   }
+  function playBtn(j) {
+    const f = (j.files || []).find(n => PLAYABLE.test(n));
+    return f ? h('button', {onclick: () => playerView(j, f)}, 'Play') : null;
+  }
   function jobRow(j) {
     const active = j.state === 'queued' || j.state === 'running';
     return h('div', {class: 'job'},
       h('div', {class: 'row'}, h('strong', {}, j.title || j.url), h('span', {class: 'tag ' + j.state}, j.state),
         h('span', {class: 'spacer'}),
+        j.state === 'done' ? playBtn(j) : null,
         active ? h('button', {class: 'secondary', onclick: async () => { await api('POST', `api/jobs/${j.id}/cancel`); loadJobs(); }}, 'Cancel')
                : h('button', {class: 'secondary', onclick: async () => { await api('DELETE', `api/jobs/${j.id}`); loadJobs(); }}, 'Delete')),
       j.title ? h('div', {class: 'muted'}, j.url) : null,
@@ -178,6 +185,23 @@ function mainView() {
   show(h('div', {class: 'card'}, h('h2', {}, 'Download a Bilibili video'), h('div', {class: 'row'}, url, goBtn), err), detail, jobsBox);
   loadJobs();
   pollTimer = setInterval(loadJobs, 2000);
+}
+
+// floating player; the file comes from the authenticated file endpoint (relative url, works under a proxy prefix)
+function playerView(j, name) {
+  const close = () => { media.pause(); media.removeAttribute('src'); media.load(); overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const href = `api/jobs/${j.id}/files/${encodeURIComponent(name)}`;
+  const media = h(AUDIO_RE.test(name) ? 'audio' : 'video', {controls: true, autoplay: true, playsinline: true, src: href + '?inline=1'});
+  const msg = h('div', {class: 'err'});
+  media.addEventListener('error', () => msg.replaceChildren('This browser cannot play this file (HEVC needs hardware support). ',
+    h('a', {href}, 'Download it instead')));
+  const overlay = h('div', {class: 'overlay', onclick: e => { if (e.target === overlay) close(); }},
+    h('div', {class: 'player'},
+      h('div', {class: 'row'}, h('strong', {}, j.title || name), h('span', {class: 'spacer'}), h('button', {class: 'secondary', onclick: close}, '\u00d7')),
+      media, msg));
+  document.addEventListener('keydown', onKey);
+  document.body.append(overlay);
 }
 
 document.getElementById('btn-settings').addEventListener('click', settingsView);
